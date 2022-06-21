@@ -30,10 +30,10 @@ func NewConn(netConn net.Conn) *Conn {
 		netConn:   netConn,
 		createdAt: time.Now(),
 	}
-	cn.rd = proto.NewReader(netConn)
-	cn.bw = bufio.NewWriter(netConn)
-	cn.wr = proto.NewWriter(cn.bw)
-	cn.SetUsedAt(time.Now())
+	cn.rd = proto.NewReader(netConn) // 读取 TCP 方法的封装
+	cn.bw = bufio.NewWriter(netConn) // writer 增加 bufio
+	cn.wr = proto.NewWriter(cn.bw)   // 写入 TCP 时的协议封装
+	cn.SetUsedAt(time.Now())         // 链接的创建时间
 	return cn
 }
 
@@ -76,11 +76,15 @@ func (cn *Conn) WithWriter(
 	ctx context.Context, timeout time.Duration, fn func(wr *proto.Writer) error,
 ) error {
 	if timeout != 0 {
+		// 如果配置了 Write 超时，则配置 TCP 的超时时间
+		// 嘿嘿嘿，这个说明之前「通道」的写法没有错误
 		if err := cn.netConn.SetWriteDeadline(cn.deadline(ctx, timeout)); err != nil {
 			return err
 		}
 	}
 
+	// 判断链接的缓冲区（应用层，bufio）还有之前的数据
+	// 则会清除之前的数据
 	if cn.bw.Buffered() > 0 {
 		cn.bw.Reset(cn.netConn)
 	}
@@ -89,6 +93,8 @@ func (cn *Conn) WithWriter(
 		return err
 	}
 
+	// TCP 的操作都是封装了，write 方法使用 bufio 封装了
+	// 所以需要写入到
 	return cn.bw.Flush()
 }
 

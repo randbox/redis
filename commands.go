@@ -403,7 +403,7 @@ type cmdable func(ctx context.Context, cmd Cmder) error
 
 type statefulCmdable func(ctx context.Context, cmd Cmder) error
 
-//------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------
 
 func (c statefulCmdable) Auth(ctx context.Context, password string) *StatusCmd {
 	cmd := NewStatusCmd(ctx, "auth", password)
@@ -466,7 +466,7 @@ func (c statefulCmdable) Hello(ctx context.Context,
 	return cmd
 }
 
-//------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------
 
 func (c cmdable) Command(ctx context.Context) *CommandsInfoCmd {
 	cmd := NewCommandsInfoCmd(ctx, "command")
@@ -788,7 +788,14 @@ func (c cmdable) DecrBy(ctx context.Context, key string, decrement int64) *IntCm
 
 // Get Redis `GET key` command. It returns redis.Nil error when key does not exist.
 func (c cmdable) Get(ctx context.Context, key string) *StringCmd {
+	// 构造 StringCmd 类型，不同的 Redis 命令，构造不同的结构
+	// StringCmd、IntCmd、FloatCmd、StatusCmd 等等
+	// 所有 XXCmd 内部都有 baseCmd 作为匿名字段，封装一些常用的功能，例如 SetErr
 	cmd := NewStringCmd(ctx, "get", key)
+
+	// 调用「自己」执行
+	// 由于 Client 初始化时 c.cmdable = c.Process，所以本质是调用 c.Process
+	// 具体还是要看 Client 初始化指定的方法
 	_ = c(ctx, cmd)
 	return cmd
 }
@@ -1042,7 +1049,7 @@ func (c cmdable) Copy(ctx context.Context, sourceKey, destKey string, db int, re
 	return cmd
 }
 
-//------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------
 
 func (c cmdable) GetBit(ctx context.Context, key string, offset int64) *IntCmd {
 	cmd := NewIntCmd(ctx, "getbit", key, offset)
@@ -1139,7 +1146,7 @@ func (c cmdable) BitField(ctx context.Context, key string, args ...interface{}) 
 	return cmd
 }
 
-//------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------
 
 func (c cmdable) Scan(ctx context.Context, cursor uint64, match string, count int64) *ScanCmd {
 	args := []interface{}{"scan", cursor}
@@ -1209,7 +1216,7 @@ func (c cmdable) ZScan(ctx context.Context, key string, cursor uint64, match str
 	return cmd
 }
 
-//------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------
 
 func (c cmdable) HDel(ctx context.Context, key string, fields ...string) *IntCmd {
 	args := make([]interface{}, 2+len(fields))
@@ -1332,7 +1339,7 @@ func (c cmdable) HRandFieldWithValues(ctx context.Context, key string, count int
 	return cmd
 }
 
-//------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------
 
 func (c cmdable) BLPop(ctx context.Context, timeout time.Duration, keys ...string) *StringSliceCmd {
 	args := make([]interface{}, 1+len(keys)+1)
@@ -1555,7 +1562,7 @@ func (c cmdable) BLMove(
 	return cmd
 }
 
-//------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------
 
 func (c cmdable) SAdd(ctx context.Context, key string, members ...interface{}) *IntCmd {
 	args := make([]interface{}, 2, 2+len(members))
@@ -1717,7 +1724,7 @@ func (c cmdable) SUnionStore(ctx context.Context, destination string, keys ...st
 	return cmd
 }
 
-//------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------
 
 // XAddArgs accepts values in the following formats:
 //   - XAddArgs.Values = []interface{}{"key1", "value1", "key2", "value2"}
@@ -2125,7 +2132,7 @@ func (c cmdable) XInfoStreamFull(ctx context.Context, key string, count int) *XI
 	return cmd
 }
 
-//------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------
 
 // Z represents sorted set member.
 type Z struct {
@@ -2737,7 +2744,7 @@ func (c cmdable) ZDiffStore(ctx context.Context, destination string, keys ...str
 	return cmd
 }
 
-//------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------
 
 func (c cmdable) PFAdd(ctx context.Context, key string, els ...interface{}) *IntCmd {
 	args := make([]interface{}, 2, 2+len(els))
@@ -2772,7 +2779,7 @@ func (c cmdable) PFMerge(ctx context.Context, dest string, keys ...string) *Stat
 	return cmd
 }
 
-//------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------
 
 func (c cmdable) BgRewriteAOF(ctx context.Context) *StatusCmd {
 	cmd := NewStatusCmd(ctx, "bgrewriteaof")
@@ -3007,7 +3014,7 @@ func (c cmdable) MemoryUsage(ctx context.Context, key string, samples ...int) *I
 	return cmd
 }
 
-//------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------
 
 func (c cmdable) Eval(ctx context.Context, script string, keys []string, args ...interface{}) *Cmd {
 	cmdArgs := make([]interface{}, 3+len(keys), 3+len(keys)+len(args))
@@ -3069,7 +3076,7 @@ func (c cmdable) ScriptLoad(ctx context.Context, script string) *StringCmd {
 	return cmd
 }
 
-//------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------
 
 // Publish posts the message to the channel.
 func (c cmdable) Publish(ctx context.Context, channel string, message interface{}) *IntCmd {
@@ -3106,7 +3113,7 @@ func (c cmdable) PubSubNumPat(ctx context.Context) *IntCmd {
 	return cmd
 }
 
-//------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------
 
 func (c cmdable) ClusterSlots(ctx context.Context) *ClusterSlotsCmd {
 	cmd := NewClusterSlotsCmd(ctx, "cluster", "slots")
@@ -3240,7 +3247,7 @@ func (c cmdable) ClusterAddSlotsRange(ctx context.Context, min, max int) *Status
 	return c.ClusterAddSlots(ctx, slots...)
 }
 
-//------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------
 
 func (c cmdable) GeoAdd(ctx context.Context, key string, geoLocation ...*GeoLocation) *IntCmd {
 	args := make([]interface{}, 2+3*len(geoLocation))

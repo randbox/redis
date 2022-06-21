@@ -35,6 +35,7 @@ func NewWriter(wr writer) *Writer {
 }
 
 func (w *Writer) WriteArgs(args []interface{}) error {
+	// Redis 协议
 	if err := w.WriteByte(RespArray); err != nil {
 		return err
 	}

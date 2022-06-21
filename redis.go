@@ -20,7 +20,7 @@ func SetLogger(logger internal.Logging) {
 	internal.Logger = logger
 }
 
-//------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------
 
 type Hook interface {
 	BeforeProcess(ctx context.Context, cmd Cmder) (context.Context, error)
@@ -51,15 +51,17 @@ func (hs *hooks) AddHook(hook Hook) {
 func (hs hooks) process(
 	ctx context.Context, cmd Cmder, fn func(context.Context, Cmder) error,
 ) error {
+	// 判断是否有 hook，没有则直接调用 fn，也就是 c.Process 传入的 c.baseClient.process 方法
 	if len(hs.hooks) == 0 {
 		err := fn(ctx, cmd)
-		cmd.SetErr(err)
+		cmd.SetErr(err) // 把 err 添加只 cmd 里
 		return err
 	}
 
 	var hookIndex int
 	var retErr error
 
+	// 如果存在 hook，则会依次执行 hook 的 BeforeProcess 方法
 	for ; hookIndex < len(hs.hooks) && retErr == nil; hookIndex++ {
 		ctx, retErr = hs.hooks[hookIndex].BeforeProcess(ctx, cmd)
 		if retErr != nil {
@@ -67,11 +69,13 @@ func (hs hooks) process(
 		}
 	}
 
+	// 执行具体的方法
 	if retErr == nil {
 		retErr = fn(ctx, cmd)
 		cmd.SetErr(retErr)
 	}
 
+	// 执行完需要再执行 hook 的 AfterProcess
 	for hookIndex--; hookIndex >= 0; hookIndex-- {
 		if err := hs.hooks[hookIndex].AfterProcess(ctx, cmd); err != nil {
 			retErr = err
@@ -121,7 +125,7 @@ func (hs hooks) processTxPipeline(
 	return hs.processPipeline(ctx, cmds, fn)
 }
 
-//------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------
 
 type baseClient struct {
 	opt      *Options
@@ -132,8 +136,8 @@ type baseClient struct {
 
 func newBaseClient(opt *Options, connPool pool.Pooler) *baseClient {
 	return &baseClient{
-		opt:      opt,
-		connPool: connPool,
+		opt:      opt,      // 保存选项
+		connPool: connPool, // 连接池
 	}
 }
 
@@ -174,15 +178,18 @@ func (c *baseClient) newConn(ctx context.Context) (*pool.Conn, error) {
 
 func (c *baseClient) getConn(ctx context.Context) (*pool.Conn, error) {
 	if c.opt.Limiter != nil {
+		// 如果选项中配置了 限流器，则会判断是否被限制
 		err := c.opt.Limiter.Allow()
 		if err != nil {
 			return nil, err
 		}
 	}
 
+	// 获得链接，并且是 Redis 握手成功，可以直接使用的
 	cn, err := c._getConn(ctx)
 	if err != nil {
 		if c.opt.Limiter != nil {
+			// 如果链接报错 todo:
 			c.opt.Limiter.ReportResult(err)
 		}
 		return nil, err
@@ -192,6 +199,10 @@ func (c *baseClient) getConn(ctx context.Context) (*pool.Conn, error) {
 }
 
 func (c *baseClient) _getConn(ctx context.Context) (*pool.Conn, error) {
+	// 从 连接池 获得一个链接
+	// 实际调用的是 *pool.ConnPool 结构的 Get 方法
+	// func (p *ConnPool) Get(ctx context.Context) (*Conn, error)
+	// 获得的链接是被 Redis 协议封装的
 	cn, err := c.connPool.Get(ctx)
 	if err != nil {
 		return nil, err
@@ -201,6 +212,9 @@ func (c *baseClient) _getConn(ctx context.Context) (*pool.Conn, error) {
 		return cn, nil
 	}
 
+	// 如果这个链接的新的，需要做初始化
+	// 初始化: 与 Redis 之间的初次握手
+	// 完成过后，就是完全可用的链接
 	if err := c.initConn(ctx, cn); err != nil {
 		c.connPool.Remove(ctx, cn, err)
 		if err := errors.Unwrap(err); err != nil {
@@ -280,22 +294,27 @@ func (c *baseClient) releaseConn(ctx context.Context, cn *pool.Conn, err error) 
 func (c *baseClient) withConn(
 	ctx context.Context, fn func(context.Context, *pool.Conn) error,
 ) error {
+	// 从连接池获取一个链接
 	cn, err := c.getConn(ctx)
 	if err != nil {
 		return err
 	}
 
 	defer func() {
+		// 操作结束，把链接重新放回连接池
 		c.releaseConn(ctx, cn, err)
 	}()
 
 	done := ctx.Done() //nolint:ifshort
 
+	// 判断是否配置了 超时时间，没有则直接执行 fn
 	if done == nil {
 		err = fn(ctx, cn)
 		return err
 	}
 
+	// 异步执行，当 ctx 完成后，则关闭连接
+	// todo: 不是很清晰
 	errc := make(chan error, 1)
 	go func() { errc <- fn(ctx, cn) }()
 
@@ -314,6 +333,7 @@ func (c *baseClient) withConn(
 
 func (c *baseClient) process(ctx context.Context, cmd Cmder) error {
 	var lastErr error
+	// 根据选项中的 MaxRetries 字段，会做重试操作
 	for attempt := 0; attempt <= c.opt.MaxRetries; attempt++ {
 		attempt := attempt
 
@@ -329,14 +349,23 @@ func (c *baseClient) process(ctx context.Context, cmd Cmder) error {
 
 func (c *baseClient) _process(ctx context.Context, cmd Cmder, attempt int) (bool, error) {
 	if attempt > 0 {
+		// 结合 ctx 中设置的超时、回退超时，进行休眠
+		// 回退超时: 根据重试次数，进行计算超时时间
+		// 如果直接超时则直接返回
 		if err := internal.Sleep(ctx, c.retryBackoff(attempt)); err != nil {
 			return false, err
 		}
 	}
 
 	retryTimeout := uint32(1)
+
+	// 进行计算
+	// withConn 包含了获取链接、释放链接的一些方法
+	// func 参数是获得到 链接 后具体执行的方法
 	err := c.withConn(ctx, func(ctx context.Context, cn *pool.Conn) error {
 		err := cn.WithWriter(ctx, c.opt.WriteTimeout, func(wr *proto.Writer) error {
+			// 对链接的具体操作，其中 wr 就是使用 proto 封装的链接
+			// 具体内部就是 Redis 协议了
 			return writeCmd(wr, cmd)
 		})
 		if err != nil {
@@ -534,7 +563,7 @@ func txPipelineReadQueued(rd *proto.Reader, statusCmd *StatusCmd, cmds []Cmder) 
 	return nil
 }
 
-//------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------
 
 // Client is a Redis client representing a pool of zero or more underlying connections.
 // It's safe for concurrent use by multiple goroutines.
@@ -550,12 +579,19 @@ type Client struct {
 
 // NewClient returns a client to the Redis Server specified by Options.
 func NewClient(opt *Options) *Client {
+	// Options 包含所有选项，client、pool
+	// 给 Option 添加默认值
 	opt.init()
 
 	c := Client{
+		// 使用 newConnPool 创建连接池
 		baseClient: newBaseClient(opt, newConnPool(opt)),
 		ctx:        context.Background(),
 	}
+
+	// type cmdable func(ctx context.Context, cmd Cmder) error
+	// 函数是第一公民，并设置 c.Process 为具体方法
+	// 由于 cmdable 为匿名字段，所有 Client "继承" 了 cmdable 所有方法
 	c.cmdable = c.Process
 
 	return &c
@@ -598,8 +634,9 @@ func (c *Client) Do(ctx context.Context, args ...interface{}) *Cmd {
 	return cmd
 }
 
+// Process cmdable 具体调用的方法
 func (c *Client) Process(ctx context.Context, cmd Cmder) error {
-	return c.hooks.process(ctx, cmd, c.baseClient.process)
+	return c.hooks.process(ctx, cmd, c.baseClient.process) // c.baseClient.process 具体执行的方法
 }
 
 func (c *Client) processPipeline(ctx context.Context, cmds []Cmder) error {
@@ -707,7 +744,7 @@ func (c *Client) PSubscribe(ctx context.Context, channels ...string) *PubSub {
 	return pubsub
 }
 
-//------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------
 
 type conn struct {
 	baseClient

@@ -83,12 +83,16 @@ type Options struct {
 	// Type of connection pool.
 	// true for FIFO pool, false for LIFO pool.
 	// Note that fifo has higher overhead compared to lifo.
+	// fifo 有更大的开销
 	PoolFIFO bool
 	// Maximum number of socket connections.
 	// Default is 10 connections per every available CPU as reported by runtime.GOMAXPROCS.
+	// 连接池容量（最多的链接数量）
+	// 默认是 runtime.GOMAXPROCS*10
 	PoolSize int
 	// Minimum number of idle connections which is useful when establishing
 	// new connection is slow.
+	// 闲置链接（可直接使用的链接）的最少数量
 	MinIdleConns int
 	// Connection age at which client retires (closes) the connection.
 	// Default is to not close aged connections.
@@ -96,10 +100,12 @@ type Options struct {
 	// Amount of time client waits for connection if all connections
 	// are busy before returning an error.
 	// Default is ReadTimeout + 1 second.
+	// 获取链接时，如果所有链接都在使用，则 client 等待时间
 	PoolTimeout time.Duration
 	// Amount of time after which client closes idle connections.
 	// Should be less than server's timeout.
 	// Default is 5 minutes. -1 disables idle timeout check.
+	// 客户端关闭空闲链接的时间
 	IdleTimeout time.Duration
 	// Frequency of idle checks made by idle connections reaper.
 	// Default is 1 minute. -1 disables idle connections reaper,
@@ -420,8 +426,13 @@ func getUserPassword(u *url.URL) (string, string) {
 }
 
 func newConnPool(opt *Options) *pool.ConnPool {
+
+	// 调用 pool.NewConnPool 创建连接池
+	// 只需要使用部分字段，所以从 Option 做了选项提取
 	return pool.NewConnPool(&pool.Options{
 		Dialer: func(ctx context.Context) (net.Conn, error) {
+			// 创建新连接的方法
+			// 返回的是 原生的 net.Conn 方法
 			return opt.Dialer(ctx, opt.Network, opt.Addr)
 		},
 		PoolFIFO:           opt.PoolFIFO,

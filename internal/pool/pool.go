@@ -94,30 +94,36 @@ type ConnPool struct {
 var _ Pooler = (*ConnPool)(nil)
 
 func NewConnPool(opt *Options) *ConnPool {
+	// 连接池的 具体 实现
 	p := &ConnPool{
 		opt: opt,
 
-		queue:     make(chan struct{}, opt.PoolSize),
-		conns:     make([]*Conn, 0, opt.PoolSize),
-		idleConns: make([]*Conn, 0, opt.PoolSize),
+		queue:     make(chan struct{}, opt.PoolSize), // 开关，链接中可以使用的 todo:
+		conns:     make([]*Conn, 0, opt.PoolSize),    // 链接集合
+		idleConns: make([]*Conn, 0, opt.PoolSize),    // 空闲链接集合
 		closedCh:  make(chan struct{}),
 	}
 
 	p.connsMu.Lock()
-	p.checkMinIdleConns()
+	p.checkMinIdleConns() // 按照 MinIdle 选项，提前生成指定数量的链接
 	p.connsMu.Unlock()
 
+	// 如果设置了闲置链接的过期时间、限制链接的清理频率，则需要对闲置链接进行清理
 	if opt.IdleTimeout > 0 && opt.IdleCheckFrequency > 0 {
+		// 定期清理
 		go p.reaper(opt.IdleCheckFrequency)
 	}
 
 	return p
 }
 
+// checkMinIdleConns 检查空闲链接数量，补充新连接
 func (p *ConnPool) checkMinIdleConns() {
 	if p.opt.MinIdleConns == 0 {
 		return
 	}
+
+	// 当池中链接数量少于
 	for p.poolSize < p.opt.PoolSize && p.idleConnsLen < p.opt.MinIdleConns {
 		p.poolSize++
 		p.idleConnsLen++
@@ -134,7 +140,9 @@ func (p *ConnPool) checkMinIdleConns() {
 	}
 }
 
+// addIdleConn 添加空闲链接
 func (p *ConnPool) addIdleConn() error {
+	// 创建链接
 	cn, err := p.dialConn(context.TODO(), true)
 	if err != nil {
 		return err
@@ -149,6 +157,7 @@ func (p *ConnPool) addIdleConn() error {
 		return ErrClosed
 	}
 
+	// 将创建好的链接添加至队列里
 	p.conns = append(p.conns, cn)
 	p.idleConns = append(p.idleConns, cn)
 	return nil
@@ -187,6 +196,7 @@ func (p *ConnPool) newConn(ctx context.Context, pooled bool) (*Conn, error) {
 }
 
 func (p *ConnPool) dialConn(ctx context.Context, pooled bool) (*Conn, error) {
+	// 判断 连接池 是否被关闭
 	if p.closed() {
 		return nil, ErrClosed
 	}
@@ -195,15 +205,19 @@ func (p *ConnPool) dialConn(ctx context.Context, pooled bool) (*Conn, error) {
 		return nil, p.getLastDialError()
 	}
 
+	// 调用选项中设置的 Dial 函数，创建 net.Conn 链接
 	netConn, err := p.opt.Dialer(ctx)
 	if err != nil {
 		p.setLastDialError(err)
+		// 重试
 		if atomic.AddUint32(&p.dialErrorsNum, 1) == uint32(p.opt.PoolSize) {
 			go p.tryDial()
 		}
 		return nil, err
 	}
 
+	// 封装 net.Conn 链接
+	// 添加 Redis 协议的解析生成，并对 Write 增加 bufio
 	cn := NewConn(netConn)
 	cn.pooled = pooled
 	return cn, nil
@@ -251,6 +265,7 @@ func (p *ConnPool) Get(ctx context.Context) (*Conn, error) {
 	}
 
 	for {
+		// 尝试从 idle 队列里找到一个链接
 		p.connsMu.Lock()
 		cn, err := p.popIdle()
 		p.connsMu.Unlock()
@@ -263,6 +278,8 @@ func (p *ConnPool) Get(ctx context.Context) (*Conn, error) {
 			break
 		}
 
+		// 判断链接是否超时
+		// 超时则重新获取一个新的
 		if p.isStaleConn(cn) {
 			_ = p.CloseConn(cn)
 			continue
@@ -274,6 +291,8 @@ func (p *ConnPool) Get(ctx context.Context) (*Conn, error) {
 
 	atomic.AddUint32(&p.stats.Misses, 1)
 
+	// 如果遍历了所有 idle 队列，也没有找到一个可用的链接
+	// 则会重新创建一个
 	newcn, err := p.newConn(ctx, true)
 	if err != nil {
 		p.freeTurn()
@@ -287,6 +306,7 @@ func (p *ConnPool) getTurn() {
 	p.queue <- struct{}{}
 }
 
+// waitTurn 判断链接是否可用 todo:
 func (p *ConnPool) waitTurn(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
@@ -300,9 +320,11 @@ func (p *ConnPool) waitTurn(ctx context.Context) error {
 	default:
 	}
 
+	// 从定时器池中获得一个定时器
 	timer := timers.Get().(*time.Timer)
 	timer.Reset(p.opt.PoolTimeout)
 
+	// 等待，池中有可以使用的链接
 	select {
 	case <-ctx.Done():
 		if !timer.Stop() {
@@ -336,6 +358,8 @@ func (p *ConnPool) popIdle() (*Conn, error) {
 		return nil, nil
 	}
 
+	// 根据是否是 FIFO 从 队列里取出链接
+	// 由于 FIFO 涉及到 copy 操作，所以效率会低
 	var cn *Conn
 	if p.opt.PoolFIFO {
 		cn = p.idleConns[0]
@@ -347,7 +371,7 @@ func (p *ConnPool) popIdle() (*Conn, error) {
 		p.idleConns = p.idleConns[:idx]
 	}
 	p.idleConnsLen--
-	p.checkMinIdleConns()
+	p.checkMinIdleConns() // 补充新连接
 	return cn, nil
 }
 
@@ -388,11 +412,14 @@ func (p *ConnPool) removeConnWithLock(cn *Conn) {
 }
 
 func (p *ConnPool) removeConn(cn *Conn) {
+	// 遍历所有链接，找到相同的
 	for i, c := range p.conns {
 		if c == cn {
 			p.conns = append(p.conns[:i], p.conns[i+1:]...)
 			if cn.pooled {
 				p.poolSize--
+
+				// 如果数量不够，则需要重新新的链接
 				p.checkMinIdleConns()
 			}
 			return
@@ -487,9 +514,16 @@ func (p *ConnPool) reaper(frequency time.Duration) {
 			// It is possible that ticker and closedCh arrive together,
 			// and select pseudo-randomly pick ticker case, we double
 			// check here to prevent being executed after closed.
+
+			// 双检查，避免 定时器、关闭通知 同时到达
+			// select 会对同时到达的，随机选择
 			if p.closed() {
 				return
 			}
+
+			// 判断、清理旧链接
+			// Reap: 收割
+			// Stable: 陈旧
 			_, err := p.ReapStaleConns()
 			if err != nil {
 				internal.Logger.Printf(context.Background(), "ReapStaleConns failed: %s", err)
@@ -503,6 +537,10 @@ func (p *ConnPool) reaper(frequency time.Duration) {
 
 func (p *ConnPool) ReapStaleConns() (int, error) {
 	var n int
+
+	// 从头开始逐个判断 idle 队列里的链接
+	// 因为 idle，新创建的是插到末尾
+	// 所以检测当检测到某个链接没有过期，则后面所有的链接都不会过期
 	for {
 		p.getTurn()
 
@@ -529,13 +567,16 @@ func (p *ConnPool) reapStaleConn() *Conn {
 	}
 
 	cn := p.idleConns[0]
+
+	// 判断链接是否过期
 	if !p.isStaleConn(cn) {
 		return nil
 	}
 
+	// 过期，则从队列里移除
 	p.idleConns = append(p.idleConns[:0], p.idleConns[1:]...)
 	p.idleConnsLen--
-	p.removeConn(cn)
+	p.removeConn(cn) // 还需要从总池子里删掉该链接
 
 	return cn
 }

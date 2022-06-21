@@ -1,5 +1,25 @@
 # Redis client for Go
 
+阅读源代码，使用分支为 `v9.0.0-beta.1`，感觉以后可以使用 diff 功能
+
+```shell
+$ git diff v9.0.0-beta.1..v9.0.0-beta.1-read
+```
+
+Redis
+
+1. 生成请求
+2. 获得一个 TCP 链接
+3. 向 TCP 写入请求
+4. 读取响应
+5. 解析响应
+
+一个 TCP 一次只能处理一个请求、响应，只有接收完相应，才可以发送下一个请求
+
+由于 Redis 处理速度很快，所以一个请求、响应只会占用 TCP 中很短的一段时间
+
+-------
+
 ![build workflow](https://github.com/go-redis/redis/actions/workflows/build.yml/badge.svg)
 [![PkgGoDev](https://pkg.go.dev/badge/github.com/go-redis/redis/v8)](https://pkg.go.dev/github.com/go-redis/redis/v8?tab=doc)
 [![Documentation](https://img.shields.io/badge/redis-documentation-informational)](https://redis.uptrace.dev/)
