@@ -913,7 +913,9 @@ func (cmd *StringCmd) String() string {
 	return cmdString(cmd, cmd.val)
 }
 
+// readReply 读取响应
 func (cmd *StringCmd) readReply(rd *proto.Reader) (err error) {
+	// 解析 TCP 程序
 	cmd.val, err = rd.ReadString()
 	return err
 }

@@ -18,6 +18,8 @@ Redis
 
 由于 Redis 处理速度很快，所以一个请求、响应只会占用 TCP 中很短的一段时间
 
+- [issues #2053](https://github.com/go-redis/redis/issues/2053)
+
 -------
 
 ![build workflow](https://github.com/go-redis/redis/actions/workflows/build.yml/badge.svg)

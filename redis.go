@@ -372,6 +372,8 @@ func (c *baseClient) _process(ctx context.Context, cmd Cmder, attempt int) (bool
 			return err
 		}
 
+		// 读取响应，由于数据类型、命令等不同，所有不同的 cmd 类型
+		// 有自己特有的读取方式，所以需要看 cmd 的 readReply 方法
 		err = cn.WithReader(ctx, c.cmdTimeout(cmd), cmd.readReply)
 		if err != nil {
 			if cmd.readTimeout() == nil {
